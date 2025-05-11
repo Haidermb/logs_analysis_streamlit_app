@@ -1,2 +1,4 @@
 venv
 all_logs
+.env
+data.json

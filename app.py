@@ -10,14 +10,16 @@ import glob
 import os
 
 
-def fetch_log_files_list(api_url):
-    response = requests.get(f"{api_url}/list_log_files")
+def fetch_log_files_list(file_list_url, auth_key=None):
+    headers = {'Authorization': auth_key} if auth_key else {}
+    response = requests.get(file_list_url, headers=headers)
     if response.status_code == 200:
         return response.json().get('files', [])
     return []
 
-def download_log_file(api_url, filename, save_dir='all_logs'):
-    response = requests.get(f"{api_url}/download_log_file/{filename}")
+def download_log_file(download_url, filename, save_dir='all_logs', auth_key=None):
+    headers = {'Authorization': auth_key} if auth_key else {}
+    response = requests.get(f"{download_url}/{filename}", headers=headers)
     if response.status_code == 200:
         os.makedirs(save_dir, exist_ok=True)
         with open(os.path.join(save_dir, filename), 'wb') as f:
@@ -73,29 +75,75 @@ def parse_log_line(line):
             log_data['extra_info'] = log_data['extra_info']
         return log_data
     return None
-# Read the log file and parse each line
+
+import os
+
+def load_sources(json_path='data.json'):
+    example_data = [
+        {
+            "name": "bots",
+            "download_url": "http://127.0.0.1:8090/download_log_file",
+            "file_list_url": "http://127.0.0.1:8090/list_log_files",
+            "auth_key": "your_bots_secret_key",
+            "folder_path": "bots_all_logs"
+        },
+        {
+            "name": "pdf",
+            "download_url": "http://127.0.0.1:8091/download_log_file",
+            "file_list_url": "http://127.0.0.1:8091/list_log_files",
+            "auth_key": "your_pdf_secret_key",
+            "folder_path": "pdf_all_logs"
+        }
+    ]
+    if not os.path.exists(json_path):
+        with open(json_path, 'w') as f:
+            json.dump(example_data, f, indent=4)
+    with open(json_path, 'r') as f:
+        return json.load(f)
+        
 def main():
     st.title("Log Viewer")
 
     # --- New: Sync logs from API ---
-    st.header("Sync Log Files from API")
-    api_url = st.text_input("API URL (e.g., http://127.0.0.1:8090)", "http://127.0.0.1:8090")
-    if st.button("Sync All Logs from API"):
-        files = fetch_log_files_list(api_url)
-        if files:
-            for filename in files:
-                success = download_log_file(api_url, filename, save_dir='all_logs')
-                if success:
-                    st.success(f"Downloaded {filename}")
-                else:
-                    st.error(f"Failed to download {filename}")
-            st.info("All available logs have been synced to the local all_logs directory.")
-        else:
-            st.warning("No log files found or failed to fetch file list.")
 
+    # --- Load sources from data.json ---
+    sources = load_sources('data.json')
+    source_names = [src['name'] for src in sources]
+    selected_source_name = st.selectbox("Select Log Source", options=source_names)
+
+    # Get the selected source's config
+    selected_source = next(src for src in sources if src['name'] == selected_source_name)
+    file_list_url = selected_source['file_list_url']
+    download_url = selected_source['download_url']
+    auth_key = selected_source.get('auth_key', None)
+    base_folder = "all_logs"
+    subfolder = selected_source.get('folder_path') or f"{selected_source_name}_all_logs"
+    folder_path = os.path.join(base_folder, subfolder)
+    os.makedirs(base_folder, exist_ok=True)  # Ensure base folder exists
+
+    # --- Sync logs from selected source ---
+    st.header(f"Sync Log Files from {selected_source_name.capitalize()}")
+    if st.button(f"Sync All Logs from {selected_source_name.capitalize()}"):
+        try:
+            count = 0    
+            files = fetch_log_files_list(file_list_url, auth_key)
+            if files:
+                for filename in files:
+                    success = download_log_file(download_url, filename, save_dir=folder_path, auth_key=auth_key)
+                    if success:
+                        count +=1 
+                        st.success(f"Downloaded {filename}")
+                    else:
+                        st.error(f"Failed to download {filename}")
+                st.info(f"All {count} available logs have been synced to the local {folder_path} directory.")
+            else:
+                st.warning("No log files found or failed to fetch file list.")
+        except Exception as e:
+            st.error(f"Error fetching file list: {e}")
     request_ids = []
     # Load logs into a DataFrame
-    df = load_logs()
+    # df = load_logs()
+    df = load_logs(log_folder_path=folder_path)
     if not df.empty and 'date_time' in df.columns:
         df = df.sort_values(by='date_time', ascending=False)
     else:
